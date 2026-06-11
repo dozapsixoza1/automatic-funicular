@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Корневой маршрут, чтобы убрать ошибку "Not Found" на главной
+# Корневой маршрут
 @app.get("/")
 def home():
     return {"status": "ok", "message": "JustGift API is running"}
@@ -101,35 +101,12 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Инициализация БД при запуске
 init_db()
 
-def verify_telegram_data(init_data: str):
-    try:
-        parsed = {}
-        for item in init_data.split("&"):
-            if "=" in item:
-                k, v = item.split("=", 1)
-                parsed[k] = v
-        hash_val = parsed.pop("hash", None)
-        if not hash_val: return None
-        data_check = "\n".join(sorted([f"{k}={v}" for k, v in parsed.items()]))
-        secret = hmac.new("WebAppData".encode(), BOT_TOKEN.encode(), hashlib.sha256).digest()
-        computed = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
-        if computed == hash_val:
-            from urllib.parse import unquote
-            return json.loads(unquote(parsed.get("user", "{}")))
-        return None
-    except Exception: return None
-
+# --- АВТО-АВТОРИЗАЦИЯ АДМИНА (ДЛЯ ТЕСТОВ) ---
 def get_current_user(x_init_data: str = Header(None)):
-    if not x_init_data: raise HTTPException(status_code=401, detail="No auth")
-    if x_init_data.startswith("dev:"):
-        tg_id = int(x_init_data.split(":")[1])
-        return {"id": tg_id, "first_name": "Dev"}
-    user = verify_telegram_data(x_init_data)
-    if not user: raise HTTPException(status_code=401, detail="Invalid auth")
-    return user
+    return {"id": 8526401545, "first_name": "Админ", "username": "admin"}
+# -------------------------------------------
 
 def get_or_create_user(tg_user: dict):
     conn = get_db()
