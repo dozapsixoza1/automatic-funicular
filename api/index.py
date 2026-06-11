@@ -19,6 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Корневой маршрут, чтобы убрать ошибку "Not Found" на главной
+@app.get("/")
+def home():
+    return {"status": "ok", "message": "JustGift API is running"}
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8667961704:AAGLpbPSMvcqXDD1sgmRTG2_FtwfHxpZJWI")
 ADMIN_IDS = [8526401545]
 INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "justgift_internal_secret")
@@ -96,6 +101,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Инициализация БД при запуске
 init_db()
 
 def verify_telegram_data(init_data: str):
@@ -106,8 +112,7 @@ def verify_telegram_data(init_data: str):
                 k, v = item.split("=", 1)
                 parsed[k] = v
         hash_val = parsed.pop("hash", None)
-        if not hash_val:
-            return None
+        if not hash_val: return None
         data_check = "\n".join(sorted([f"{k}={v}" for k, v in parsed.items()]))
         secret = hmac.new("WebAppData".encode(), BOT_TOKEN.encode(), hashlib.sha256).digest()
         computed = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
@@ -115,18 +120,15 @@ def verify_telegram_data(init_data: str):
             from urllib.parse import unquote
             return json.loads(unquote(parsed.get("user", "{}")))
         return None
-    except Exception:
-        return None
+    except Exception: return None
 
 def get_current_user(x_init_data: str = Header(None)):
-    if not x_init_data:
-        raise HTTPException(status_code=401, detail="No auth")
+    if not x_init_data: raise HTTPException(status_code=401, detail="No auth")
     if x_init_data.startswith("dev:"):
         tg_id = int(x_init_data.split(":")[1])
         return {"id": tg_id, "first_name": "Dev"}
     user = verify_telegram_data(x_init_data)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid auth")
+    if not user: raise HTTPException(status_code=401, detail="Invalid auth")
     return user
 
 def get_or_create_user(tg_user: dict):
@@ -144,8 +146,7 @@ def get_or_create_user(tg_user: dict):
     return result
 
 @app.get("/api/me")
-def get_me(tg_user=Depends(get_current_user)):
-    return get_or_create_user(tg_user)
+def get_me(tg_user=Depends(get_current_user)): return get_or_create_user(tg_user)
 
 @app.post("/api/me/photo")
 def update_photo(data: dict, tg_user=Depends(get_current_user)):
@@ -156,25 +157,20 @@ def update_photo(data: dict, tg_user=Depends(get_current_user)):
     return {"ok": True}
 
 @app.get("/api/cases")
-def get_cases():
-    return CASES
+def get_cases(): return CASES
 
 @app.post("/api/cases/{case_type}/open")
 def open_case(case_type: str, tg_user=Depends(get_current_user)):
-    if case_type not in CASES:
-        raise HTTPException(status_code=404, detail="Case not found")
+    if case_type not in CASES: raise HTTPException(status_code=404, detail="Case not found")
     case = CASES[case_type]
     user = get_or_create_user(tg_user)
     tg_id = tg_user["id"]
-
     if case_type == "daily":
         today = date.today().isoformat()
-        if user.get("last_daily") == today:
-            raise HTTPException(status_code=400, detail="Ежедневный кейс уже получен сегодня")
+        if user.get("last_daily") == today: raise HTTPException(status_code=400, detail="Ежедневный кейс уже получен сегодня")
     else:
-        if user["balance"] < case["price"]:
-            raise HTTPException(status_code=400, detail="Недостаточно звёзд")
-
+        if user["balance"] < case["price"]: raise HTTPException(status_code=400, detail="Недостаточно звёзд")
+    
     items = case["items"]
     total = sum(i["chance"] for i in items)
     roll = random.uniform(0, total)
@@ -199,15 +195,13 @@ def open_case(case_type: str, tg_user=Depends(get_current_user)):
     conn.commit()
     user_upd = dict(c.execute("SELECT * FROM users WHERE tg_id=?", (tg_id,)).fetchone())
     conn.close()
-
     spin_seq = [random.choice(items) for _ in range(29)] + [won_item]
     return {"won": won_item, "new_balance": user_upd["balance"], "spin_items": spin_seq}
 
 @app.post("/api/deposit/request")
 def request_deposit(data: dict, tg_user=Depends(get_current_user)):
     amount = int(data.get("amount", 0))
-    if amount < 1:
-        raise HTTPException(status_code=400, detail="Минимум 1 звезда")
+    if amount < 1: raise HTTPException(status_code=400, detail="Минимум 1 звезда")
     conn = get_db()
     c = conn.cursor()
     c.execute("INSERT INTO transactions (tg_id,type,amount) VALUES (?,?,?)", (tg_user["id"], "deposit", amount))
@@ -219,8 +213,7 @@ def request_deposit(data: dict, tg_user=Depends(get_current_user)):
 
 @app.post("/api/deposit/confirm")
 def confirm_deposit(data: dict):
-    if data.get("secret") != INTERNAL_SECRET:
-        raise HTTPException(status_code=403)
+    if data.get("secret") != INTERNAL_SECRET: raise HTTPException(status_code=403)
     conn = get_db()
     conn.execute("UPDATE transactions SET status='completed' WHERE id=? AND tg_id=?", (data["tx_id"], data["tg_id"]))
     conn.execute("UPDATE users SET balance=balance+? WHERE tg_id=?", (data["amount"], data["tg_id"]))
@@ -232,10 +225,8 @@ def confirm_deposit(data: dict):
 def request_withdraw(data: dict, tg_user=Depends(get_current_user)):
     amount = int(data.get("amount", 0))
     user = get_or_create_user(tg_user)
-    if amount < 50:
-        raise HTTPException(status_code=400, detail="Минимальный вывод — 50 звёзд")
-    if user["balance"] < amount:
-        raise HTTPException(status_code=400, detail="Недостаточно звёзд")
+    if amount < 50: raise HTTPException(status_code=400, detail="Минимальный вывод — 50 звёзд")
+    if user["balance"] < amount: raise HTTPException(status_code=400, detail="Недостаточно звёзд")
     conn = get_db()
     c = conn.cursor()
     conn.execute("UPDATE users SET balance=balance-? WHERE tg_id=?", (amount, tg_user["id"]))
@@ -255,8 +246,7 @@ def get_history(tg_user=Depends(get_current_user)):
 
 @app.post("/api/admin/give-stars")
 def admin_give_stars(data: dict, tg_user=Depends(get_current_user)):
-    if tg_user["id"] not in ADMIN_IDS:
-        raise HTTPException(status_code=403)
+    if tg_user["id"] not in ADMIN_IDS: raise HTTPException(status_code=403)
     conn = get_db()
     conn.execute("UPDATE users SET balance=balance+? WHERE tg_id=?", (int(data["amount"]), data["tg_id"]))
     conn.execute("INSERT INTO transactions (tg_id,type,amount,status) VALUES (?,?,?,?)", (data["tg_id"], "admin_gift", data["amount"], "completed"))
@@ -266,8 +256,7 @@ def admin_give_stars(data: dict, tg_user=Depends(get_current_user)):
 
 @app.get("/api/admin/users")
 def admin_get_users(tg_user=Depends(get_current_user)):
-    if tg_user["id"] not in ADMIN_IDS:
-        raise HTTPException(status_code=403)
+    if tg_user["id"] not in ADMIN_IDS: raise HTTPException(status_code=403)
     conn = get_db()
     users = conn.execute("SELECT * FROM users ORDER BY balance DESC LIMIT 100").fetchall()
     conn.close()
